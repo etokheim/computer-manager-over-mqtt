@@ -8,7 +8,7 @@ import os
 
 load_dotenv()
 
-DISPLAY_STATE = "on"
+DISPLAY_STATE = "ON"
 
 # Set the topic and MQTT broker information
 homeassistant_status_topic = "homeassistant/status" # TODO: Also subscribe to the status topic and republish discovery when getting events
@@ -44,7 +44,7 @@ def turn_display_on():
 	win32api.keybd_event(0x11, 0, 0x0002, 0)  # Control key up
 	
 	global DISPLAY_STATE
-	DISPLAY_STATE = "on"
+	DISPLAY_STATE = "ON"
 	publish_state()
 
 # Function to turn off the display
@@ -62,7 +62,7 @@ def turn_display_off():
 	)
 	
 	global DISPLAY_STATE
-	DISPLAY_STATE = "off"
+	DISPLAY_STATE = "OFF"
 	publish_state()
 
 # Function to publish the discovery payload
@@ -70,10 +70,12 @@ def publish_discovery_payload():
 	print("Publishing discovery payload")
 
 	discovery_payload = {
-		"name": "Puffer Display",
+		"name": "Display",
 		"command_topic": "homeassistant/switch/puffer/display/set",
 		"state_topic": "homeassistant/switch/puffer/display/state",
 		"unique_id": "puffer_display",
+		"payload_on": "ON",
+		"payload_off": "OFF",
 		"device": {
 			"identifiers": ["puffer"],
 			"name": "Puffer"
@@ -90,12 +92,11 @@ def publish_discovery_payload():
 def publish_state():
 	print("Publish state")
 
-	state_payload = {
-		"state": DISPLAY_STATE,
-	}
+	global DISPLAY_STATE
+	state_payload = DISPLAY_STATE
 
 	# If these messages are published with a RETAIN flag, the MQTT switch will receive an instant state update after subscription, and will start with the correct state. Otherwise, the initial state of the switch will be unknown. A MQTT device can reset the current state to unknown using a None payload.
-	client.publish(state_topic, json.dumps(state_payload), retain=True)
+	client.publish(state_topic, state_payload, retain=True)
 
 # Set up the MQTT client with authentication
 client = mqtt.Client()
