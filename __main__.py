@@ -26,7 +26,7 @@ def distribute_message(client, userdata, message):
 	# First, add listener to home assistant status topic!
 	payload = message.payload.decode("utf-8")
 	topic = message.topic
-	topic_stripped = topic.rstrip("/set")
+	topic_stripped = topic.removesuffix("/set")
 
 	print(f"Got message from topic: {topic_stripped}")
 	
