@@ -69,21 +69,41 @@ def turn_display_off():
 # Function to publish the discovery payload
 def publish_discovery_payload():
 	print("Publishing discovery payload")
+	
+	topic_prefix = f"homeassistant/switch/{COMPUTER_NAME}"
 
-	discovery_payload = {
-		"name": "Display",
-		"command_topic": "homeassistant/switch/" + COMPUTER_NAME + "/display/set",
-		"state_topic": "homeassistant/switch/" + COMPUTER_NAME + "/display/state",
-		"unique_id": COMPUTER_NAME + "_display",
-		"payload_on": "ON",
-		"payload_off": "OFF",
-		"device": {
-			"identifiers": [COMPUTER_NAME],
-			"name": COMPUTER_NAME
+	discovery_topics = {
+		f"homeassistant/switch/{COMPUTER_NAME}/display/config": {
+			"name": "Display",
+			"command_topic": f"{topic_prefix}/display/set",
+			"state_topic": f"{topic_prefix}/display/state",
+			"unique_id": COMPUTER_NAME + "_display",
+			"payload_on": "ON",
+			"payload_off": "OFF",
+			"device": {
+				"identifiers": [COMPUTER_NAME],
+				"name": COMPUTER_NAME
+			}
+		},
+		f"{topic_prefix}/dark_mode/config": {
+			"name": "Dark Mode",
+			"command_topic": f"{topic_prefix}/dark_mode/set",
+			"state_topic": f"{topic_prefix}/dark_mode/state",
+			"unique_id": COMPUTER_NAME + "_dark_mode",
+			"payload_on": "ON",
+			"payload_off": "OFF",
+			"device": {
+				"identifiers": [COMPUTER_NAME],
+				"name": COMPUTER_NAME
+			}
 		}
 	}
 
-	client.publish(CONFIGURATION_TOPIC, json.dumps(discovery_payload), retain=False)
+	# Publish discovery messages for each topic
+	for topic, payload in discovery_topics.items():
+		discovery_message = json.dumps(payload)
+		client.publish(f"homeassistant/{topic}/config", discovery_message, qos=1, retain=False)
+
 	
 	# From the docs:
 	# After the configs have been published, the state topics will need an update, so they need to be republished.
@@ -98,6 +118,21 @@ def publish_state():
 
 	# If these messages are published with a RETAIN flag, the MQTT switch will receive an instant state update after subscription, and will start with the correct state. Otherwise, the initial state of the switch will be unknown. A MQTT device can reset the current state to unknown using a None payload.
 	client.publish(STATE_TOPIC, state_payload, retain=True)
+
+	
+def enable_dark_mode():
+	try:
+		ctypes.windll.dwmapi.DwmSetPreferredColorization(2, 0, 0, 0)  # Enable dark mode
+		print("Dark mode enabled.")
+	except Exception as e:
+		print(f"Error enabling dark mode: {e}")
+
+def disable_dark_mode():
+	try:
+		ctypes.windll.dwmapi.DwmSetPreferredColorization(1, 0, 0, 0)  # Disable dark mode
+		print("Dark mode disabled.")
+	except Exception as e:
+		print(f"Error disabling dark mode: {e}")
 
 # Set up the MQTT client with authentication
 client = mqtt.Client()
