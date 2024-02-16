@@ -5,7 +5,7 @@ import win32api
 import json
 from dotenv import load_dotenv
 import os
-import types
+import subprocess
 
 load_dotenv()
 
@@ -44,8 +44,8 @@ client.connect(BROKER_ADDRESS, 1883, 60)
 		#	self.publish_discovery_payload()
 
 # Publish the discovery payload
-class MqttEntity():
-	def __init__(self, topic, payload, state, client):
+class EntityMqtt():
+	def __init__(self, topic, payload, client, state = None):
 		self.topic = topic
 		self.payload = payload
 		self.state = state
@@ -53,6 +53,7 @@ class MqttEntity():
 		self.payload_on = payload["payload_on"]
 		self.payload_off = payload["payload_off"]
 
+	def activate(self):
 		self.subscribe_to_mqtt()
 		self.publish_discovery_payload()
 
@@ -68,7 +69,7 @@ class MqttEntity():
 		self.publish_state()
 		
 	def publish_state(self):
-		print(f"Publishing {self.topic} state")
+		print(f"Publishing {self.topic} state ({self.state})")
 
 		# If these messages are published with a RETAIN flag, the MQTT switch will receive an instant state update after subscription, and will start with the correct state. Otherwise, the initial state of the switch will be unknown. A MQTT device can reset the current state to unknown using a None payload.
 		client.publish(self.payload["state_topic"], self.state, retain=True)
@@ -79,9 +80,98 @@ class MqttEntity():
 	def on_message(self, client, userdata, payload):
 		print(f"on_message not implemented for topic: {self.topic}") 
 
+class EntityDisplay(EntityMqtt):
+	def __init__(self, topic, payload, client, state = None):
+		super().__init__(topic, payload, client, state)
+		self.activate()
+
+	def on_message(self, client, userdata, payload):
+		# Callback function to handle incoming MQTT messages
+		print(f"New message. Client: {client}, userdata: {userdata}, payload: {payload}") 
+		
+		# Check the payload and perform corresponding actions
+		if payload == self.payload_on:
+			self.turn_display_on()
+		elif payload == self.payload_off:
+			self.turn_display_off()
+
+	# Function to turn on the display
+	def turn_display_on(self):
+		print("Turn on!")
+
+		# Simulate a key press to wake up the display (Control key)
+		win32api.keybd_event(0x11, 0, 0, 0)  # Control key down
+		win32api.keybd_event(0x11, 0, 0x0002, 0)  # Control key up
+		
+		self.state = self.payload_on
+		self.publish_state()
+
+	# Function to turn off the display
+	def turn_display_off(self):
+		print("Turn off!")
+		
+		ctypes.windll.user32.SendMessageTimeoutW(
+			ctypes.windll.user32.GetForegroundWindow(),
+			0x112,  # WM_SYSCOMMAND
+			0xF170,  # SC_MONITORPOWER
+			2,  # Turn monitor off
+			0,
+			5000,
+			ctypes.pointer(ctypes.c_ulong())
+		)
+
+		self.state = self.payload_off
+		self.publish_state()
+
+class EntityDarkMode(EntityMqtt):
+	def __init__(self, topic, payload, client, state = None):
+		super().__init__(topic, payload, client, state)
+		self.state = self.get_dark_mode_state()
+		print(f"Is dark mode enabled?: {self.state}")
+
+		self.activate()
+
+	def on_message(self, client, userdata, payload):
+		# Callback function to handle incoming MQTT messages
+		print(f"New message. Client: {client}, userdata: {userdata}, payload: {payload}") 
+		
+		# Check the payload and perform corresponding actions
+		if payload == self.payload_on:
+			self.enable_dark_mode()
+		elif payload == self.payload_off:
+			self.disable_dark_mode()
+
+	def enable_dark_mode(self):
+		try:
+			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "0", "/f"], check=True)
+			print("Dark mode enabled.")
+
+			self.state = self.payload_on
+			self.publish_state()
+		except Exception as e:
+			print(f"Error enabling dark mode: {e}")
+
+	def disable_dark_mode(self):
+		try:
+			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "1", "/f"], check=True)
+			print("Dark mode disabled.")
+
+			self.state = self.payload_off
+			self.publish_state()
+		except Exception as e:
+			print(f"Error disabling dark mode: {e}")
+			
+	def get_dark_mode_state(self):
+		try:
+			result = subprocess.run(["reg", "query", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme"], capture_output=True, text=True, check=True)
+			return self.payload_on if ("0x1" not in result.stdout) else self.payload_off
+		except Exception as e:
+			print(f"Error checking dark mode status: {e}")
+			return None
+
 topic_prefix = f"homeassistant/switch/{COMPUTER_NAME}"
 
-MQTT_ENTITIES[f"{topic_prefix}/display"] = MqttEntity(
+MQTT_ENTITIES[f"{topic_prefix}/display"] = EntityDisplay(
 	topic = f"{topic_prefix}/display",
 
 	payload = {
@@ -102,67 +192,27 @@ MQTT_ENTITIES[f"{topic_prefix}/display"] = MqttEntity(
 	client = client
 )
 
-def display_on_message(self, client, userdata, payload):
-	# Callback function to handle incoming MQTT messages
-	print(f"New message. Client: {client}, userdata: {userdata}, payload: {payload}") 
-	return
-	
-	# Check the payload and perform corresponding actions
-	if payload == self.payload_on:
-		turn_display_on()
-	elif payload == self.payload_off:
-		turn_display_off()
+MQTT_ENTITIES[f"{topic_prefix}/dark_mode"] = EntityDarkMode(
+	topic = f"{topic_prefix}/dark_mode",
 
-entity_display = MQTT_ENTITIES[f"{topic_prefix}/display"]
-entity_display.on_message = types.MethodType(display_on_message, entity_display) # types.MethodType to get access to self within the appended method.
+	payload = {
+		"name": "Dark Mode",
+		"command_topic": f"{topic_prefix}/dark_mode/set",
+		"state_topic": f"{topic_prefix}/dark_mode/state",
+		"unique_id": COMPUTER_NAME + "_dark_mode",
+		"payload_on": "ON",
+		"payload_off": "OFF",
+		"device": {
+			"identifiers": [COMPUTER_NAME],
+			"name": COMPUTER_NAME
+		}
+	},
+	
+	client = client
+)
+
 print(f"MQTT_ENTITIES: {MQTT_ENTITIES}")
-
-
-# Function to turn on the display
-def turn_display_on():
-	print("Turn on!")
-
-	# Simulate a key press to wake up the display (Control key)
-	win32api.keybd_event(0x11, 0, 0, 0)  # Control key down
-	win32api.keybd_event(0x11, 0, 0x0002, 0)  # Control key up
 	
-	global DISPLAY_STATE
-	DISPLAY_STATE = "ON"
-	publish_state()
-
-# Function to turn off the display
-def turn_display_off():
-	print("Turn off!")
-	
-	ctypes.windll.user32.SendMessageTimeoutW(
-		ctypes.windll.user32.GetForegroundWindow(),
-		0x112,  # WM_SYSCOMMAND
-		0xF170,  # SC_MONITORPOWER
-		2,  # Turn monitor off
-		0,
-		5000,
-		ctypes.pointer(ctypes.c_ulong())
-	)
-	
-	global DISPLAY_STATE
-	DISPLAY_STATE = "OFF"
-	publish_state()
-	
-def enable_dark_mode():
-	try:
-		ctypes.windll.dwmapi.DwmSetPreferredColorization(2, 0, 0, 0)  # Enable dark mode
-		print("Dark mode enabled.")
-	except Exception as e:
-		print(f"Error enabling dark mode: {e}")
-
-def disable_dark_mode():
-	try:
-		ctypes.windll.dwmapi.DwmSetPreferredColorization(1, 0, 0, 0)  # Disable dark mode
-		print("Dark mode disabled.")
-	except Exception as e:
-		print(f"Error disabling dark mode: {e}")
-
-
 # Main loop to keep the program running and handle MQTT messages
 try:
 	client.loop_start()
