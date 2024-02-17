@@ -24,7 +24,6 @@ fmt = colorlog.ColoredFormatter(
 
 stdout.setFormatter(fmt)
 logger.addHandler(stdout)
-logger.propagate = False # Got unformatted duplicate log entries when propagate was true
 
 LOG_LEVEL = os.getenv("CMOM_LOG_LEVEL")
 
@@ -45,6 +44,7 @@ else:
 logger.info("Setting log level to: %s", LOG_LEVEL)
 
 # Setup
+HOMEASSISTANT_STATUS_TOPIC = "homeassistant/status"
 COMPUTER_NAME = os.getenv("COMPUTERNAME")
 BROKER_ADDRESS = os.getenv("MQTT_BROKER_ADDRESS")
 USERNAME = os.getenv("MQTT_USERNAME")
@@ -59,18 +59,27 @@ def distribute_message(client, userdata, message):
 
 	# logger.info("Got message from topic: %s. Forwarding.", topic_stripped)
 	
-	MQTT_ENTITIES[topic_stripped].on_message(client, userdata, payload)
+	try:
+		MQTT_ENTITIES[topic_stripped].on_message(client, userdata, payload)
+	except KeyError as error:
+		if topic == HOMEASSISTANT_STATUS_TOPIC:
+			logger.info("Got status message from Home Assistant: %s", payload)
+			
+			if payload == "online":
+				for topic, entity in MQTT_ENTITIES.items():
+					entity.publish_discovery_payload()
+		else:
+			raise KeyError(error)
 
 # Set up the MQTT client with authentication
 client = mqtt.Client()
 client.on_message = distribute_message
 client.username_pw_set(USERNAME, PASSWORD)
 client.connect(BROKER_ADDRESS, 1883, 60)
-#client.subscribe(topic = HOMEASSISTANT_STATUS_TOPIC, qos = 1)
-		#elif payload.lower() == "online":
-		#	# This can be replaced by only sending one discovery message with the retain flag,
-		#	# however, at first try it seemed unreliable.
-		#	self.publish_discovery_payload()
+
+# Subscribe to homeassistant's status messages
+# Needed to ie. trigger rediscovery after Home Assistant has been restarted
+client.subscribe(topic = HOMEASSISTANT_STATUS_TOPIC, qos = 1)
 
 class EntityMqtt():
 	def __init__(self, topic, payload, client, state = None):
@@ -88,7 +97,7 @@ class EntityMqtt():
 
 	def publish_discovery_payload(self):
 		"""Publish the entity's discovery payload, which registers the entity with the MQTT broker (and also enables auto discovery with Home Assistant)"""
-		logging.info("Publishing discovery payload for topic: %s", self.topic)
+		logger.info("Publishing discovery payload for topic: %s", self.topic)
 
 		discovery_message = json.dumps(self.payload)
 		client.publish(f"{self.topic}/config", discovery_message, qos=1, retain=False)
@@ -100,7 +109,7 @@ class EntityMqtt():
 		
 	def publish_state(self):
 		"""Publish the entity's state to the MQTT broker"""
-		logging.info("Publishing state for %s: %s", self.topic, self.state)
+		logger.info("Publishing state for %s: %s", self.topic, self.state)
 
 		# If these messages are published with a RETAIN flag, the MQTT switch will receive an instant state update after subscription, and will start with the correct state. Otherwise, the initial state of the switch will be unknown. A MQTT device can reset the current state to unknown using a None payload.
 		client.publish(self.payload["state_topic"], self.state, retain=True)
@@ -111,7 +120,7 @@ class EntityMqtt():
 		
 	def on_message(self, client, userdata, payload):
 		"""Handle messages"""
-		logging.error(f"on_message not implemented for topic: %s", self.topic) 
+		logger.error(f"on_message not implemented for topic: %s", self.topic) 
 
 class EntityDisplay(EntityMqtt):
 	def __init__(self, topic, payload, client, state = None):
