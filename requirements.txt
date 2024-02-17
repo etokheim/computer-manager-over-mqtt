@@ -1,3 +1,4 @@
 paho-mqtt==1.5.1
 pywin32==303
 python-dotenv
+colorlog

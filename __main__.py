@@ -6,29 +6,58 @@ import json
 from dotenv import load_dotenv
 import os
 import subprocess
+import logging
+import sys
+import colorlog
 
+# Load environment variables from .env
 load_dotenv()
 
-DISPLAY_STATE = "ON"
+# Set up logging
+logger = logging.getLogger("logger")
 
+stdout = colorlog.StreamHandler(stream=sys.stdout)
+
+fmt = colorlog.ColoredFormatter(
+	"%(white)s%(asctime)s%(reset)s | %(blue)s%(filename)s%(reset)s | %(log_color)s(%(levelname)s)%(reset)s %(log_color)s%(message)s%(reset)s"
+)
+
+stdout.setFormatter(fmt)
+logger.addHandler(stdout)
+logger.propagate = False # Got unformatted duplicate log entries when propagate was true
+
+LOG_LEVEL = os.getenv("CMOM_LOG_LEVEL")
+
+if LOG_LEVEL:
+	if LOG_LEVEL == "critical":
+		logger.setLevel(logging.CRITICAL)
+	elif LOG_LEVEL == "error":
+		logger.setLevel(logging.ERROR)
+	elif LOG_LEVEL == "warning":
+		logger.setLevel(logging.WARNING)
+	elif LOG_LEVEL == "info":
+		logger.setLevel(logging.INFO)
+	elif LOG_LEVEL == "debug":
+		logger.setLevel(logging.DEBUG)
+else:
+	logger.setLevel(logging.WARNING)
+
+logger.info("Setting log level to: %s", LOG_LEVEL)
+
+# Setup
 COMPUTER_NAME = os.getenv("COMPUTERNAME")
-
-HOMEASSISTANT_STATUS_TOPIC = "homeassistant/status"
-STATE_TOPIC = "homeassistant/switch/" + COMPUTER_NAME + "/display/state"
 BROKER_ADDRESS = os.getenv("MQTT_BROKER_ADDRESS")
 USERNAME = os.getenv("MQTT_USERNAME")
 PASSWORD = os.getenv("MQTT_PASSWORD")
 MQTT_ENTITIES = {}
 
 def distribute_message(client, userdata, message):
-	"""Route messages to the correct entities"""
-	# invoke on_message on all MqttEntities
-	# First, add listener to home assistant status topic!
+	"""Route messages to the entity matching the message topic"""
 	payload = message.payload.decode("utf-8")
 	topic = message.topic
 	topic_stripped = topic.removesuffix("/set")
 
-	print(f"Got message from topic: {topic_stripped}")
+	# logger.info("Got message from topic: %s. Forwarding.", topic_stripped)
 	
 	MQTT_ENTITIES[topic_stripped].on_message(client, userdata, payload)
 
@@ -43,7 +72,6 @@ client.connect(BROKER_ADDRESS, 1883, 60)
 		#	# however, at first try it seemed unreliable.
 		#	self.publish_discovery_payload()
 
-# Publish the discovery payload
 class EntityMqtt():
 	def __init__(self, topic, payload, client, state = None):
 		self.topic = topic
@@ -54,11 +82,13 @@ class EntityMqtt():
 		self.payload_off = payload["payload_off"]
 
 	def activate(self):
+		"""Activates the entity - meaning subscribing to it's command topic and publishing discovery"""
 		self.subscribe_to_mqtt()
 		self.publish_discovery_payload()
 
 	def publish_discovery_payload(self):
-		print(f"Publishing discovery payload for topic: {self.topic}")
+		"""Publish the entity's discovery payload, which registers the entity with the MQTT broker (and also enables auto discovery with Home Assistant)"""
+		logging.info("Publishing discovery payload for topic: %s", self.topic)
 
 		discovery_message = json.dumps(self.payload)
 		client.publish(f"{self.topic}/config", discovery_message, qos=1, retain=False)
@@ -69,16 +99,19 @@ class EntityMqtt():
 		self.publish_state()
 		
 	def publish_state(self):
-		print(f"Publishing {self.topic} state ({self.state})")
+		"""Publish the entity's state to the MQTT broker"""
+		logging.info("Publishing state for %s: %s", self.topic, self.state)
 
 		# If these messages are published with a RETAIN flag, the MQTT switch will receive an instant state update after subscription, and will start with the correct state. Otherwise, the initial state of the switch will be unknown. A MQTT device can reset the current state to unknown using a None payload.
 		client.publish(self.payload["state_topic"], self.state, retain=True)
 
 	def subscribe_to_mqtt(self):
+		"""Subscribes to messages from its own command topic"""
 		client.subscribe(topic = self.payload["command_topic"], qos = 1)
 		
 	def on_message(self, client, userdata, payload):
-		print(f"on_message not implemented for topic: {self.topic}") 
+		"""Handle messages"""
+		logging.error(f"on_message not implemented for topic: %s", self.topic) 
 
 class EntityDisplay(EntityMqtt):
 	def __init__(self, topic, payload, client, state = None):
@@ -86,9 +119,10 @@ class EntityDisplay(EntityMqtt):
 		self.activate()
 
 	def on_message(self, client, userdata, payload):
+		"""EntityDisplay's own handling of incoming messages"""
 		# Callback function to handle incoming MQTT messages
-		print(f"New message. Client: {client}, userdata: {userdata}, payload: {payload}") 
-		
+		logger.info("New message for topic %s with payload %s. Client: %s, userdata: %s", self.topic, payload, client, userdata)
+
 		# Check the payload and perform corresponding actions
 		if payload == self.payload_on:
 			self.turn_display_on()
@@ -97,7 +131,8 @@ class EntityDisplay(EntityMqtt):
 
 	# Function to turn on the display
 	def turn_display_on(self):
-		print("Turn on!")
+		"""Turn the device's display on"""
+		logger.debug("Turning display on")
 
 		# Simulate a key press to wake up the display (Control key)
 		win32api.keybd_event(0x11, 0, 0, 0)  # Control key down
@@ -108,8 +143,9 @@ class EntityDisplay(EntityMqtt):
 
 	# Function to turn off the display
 	def turn_display_off(self):
-		print("Turn off!")
-		
+		"""Turn the device's display off"""
+		logger.debug("Turning display off")
+	
 		ctypes.windll.user32.SendMessageTimeoutW(
 			ctypes.windll.user32.GetForegroundWindow(),
 			0x112,  # WM_SYSCOMMAND
@@ -127,13 +163,13 @@ class EntityDarkMode(EntityMqtt):
 	def __init__(self, topic, payload, client, state = None):
 		super().__init__(topic, payload, client, state)
 		self.state = self.get_dark_mode_state()
-		print(f"Is dark mode enabled?: {self.state}")
+		logger.debug("Is dark mode enabled?: %s", self.state)
 
 		self.activate()
 
 	def on_message(self, client, userdata, payload):
-		# Callback function to handle incoming MQTT messages
-		print(f"New message. Client: {client}, userdata: {userdata}, payload: {payload}") 
+		"""EntityDarkMode's own handing of messages"""
+		logger.info("New message for topic %s with payload %s. Client: %s, userdata: %s", self.topic, payload, client, userdata)
 		
 		# Check the payload and perform corresponding actions
 		if payload == self.payload_on:
@@ -144,29 +180,29 @@ class EntityDarkMode(EntityMqtt):
 	def enable_dark_mode(self):
 		try:
 			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "0", "/f"], check=True)
-			print("Dark mode enabled.")
+			logger.debug("Dark mode enabled")
 
 			self.state = self.payload_on
 			self.publish_state()
 		except Exception as e:
-			print(f"Error enabling dark mode: {e}")
+			logger.error("Error enabling dark mode: %s", e)
 
 	def disable_dark_mode(self):
 		try:
 			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "1", "/f"], check=True)
-			print("Dark mode disabled.")
+			logger.debug("Dark mode disabled")
 
 			self.state = self.payload_off
 			self.publish_state()
-		except Exception as e:
-			print(f"Error disabling dark mode: {e}")
+		except Exception as error:
+			logger.error("Error disabling dark mode: %s", error)
 			
 	def get_dark_mode_state(self):
 		try:
 			result = subprocess.run(["reg", "query", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme"], capture_output=True, text=True, check=True)
 			return self.payload_on if ("0x1" not in result.stdout) else self.payload_off
-		except Exception as e:
-			print(f"Error checking dark mode status: {e}")
+		except Exception as error:
+			logger.error("Error checking dark mode status: %s", error)
 			return None
 
 topic_prefix = f"homeassistant/switch/{COMPUTER_NAME}"
@@ -211,7 +247,7 @@ MQTT_ENTITIES[f"{topic_prefix}/dark_mode"] = EntityDarkMode(
 	client = client
 )
 
-print(f"MQTT_ENTITIES: {MQTT_ENTITIES}")
+logger.debug("MQTT_ENTITIES: %s", MQTT_ENTITIES)
 	
 # Main loop to keep the program running and handle MQTT messages
 try:
@@ -219,6 +255,7 @@ try:
 	while True:
 		time.sleep(1)  # Keep the program running
 except KeyboardInterrupt:
-	print("Exiting program.")
+	logger.warning("Exiting program")
 	client.disconnect()
 	client.loop_stop()
+	
