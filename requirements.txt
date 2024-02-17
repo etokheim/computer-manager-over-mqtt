@@ -1,4 +1,4 @@
-paho-mqtt==1.5.1
-pywin32==303
+paho-mqtt
+pywin32
 python-dotenv
 colorlog
