@@ -188,7 +188,7 @@ class EntityDarkMode(EntityMqtt):
 
 	def enable_dark_mode(self):
 		try:
-			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "0", "/f"], check=True)
+			subprocess.run(["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "0", "/f"], check=True)
 			logger.debug("Dark mode enabled")
 
 			self.state = self.payload_on
@@ -198,7 +198,7 @@ class EntityDarkMode(EntityMqtt):
 
 	def disable_dark_mode(self):
 		try:
-			subprocess.run(["reg", "add", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "1", "/f"], check=True)
+			subprocess.run(["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "/v", "AppsUseLightTheme", "/t", "REG_DWORD", "/d", "1", "/f"], check=True)
 			logger.debug("Dark mode disabled")
 
 			self.state = self.payload_off
@@ -208,7 +208,7 @@ class EntityDarkMode(EntityMqtt):
 			
 	def get_dark_mode_state(self):
 		try:
-			result = subprocess.run(["reg", "query", "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme"], capture_output=True, text=True, check=True)
+			result = subprocess.run(["reg", "query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "/v", "AppsUseLightTheme"], capture_output=True, text=True, check=True)
 			return self.payload_on if ("0x1" not in result.stdout) else self.payload_off
 		except Exception as error:
 			logger.error("Error checking dark mode status: %s", error)
